@@ -163,14 +163,3 @@ VITE_API_URL=your_backend_api_url
 4. Push to the branch
 5. Open a Pull Request
 
-## Support 💬
-
-For support and questions, visit the [Lovable Discord community](https://discord.com/channels/1119885301872070706/1280461670979993613)
-
-## License 📄
-
-This project was created with Lovable.
-
----
-
-Built with ❤️ using [Lovable](https://lovable.dev)
