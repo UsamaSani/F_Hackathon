@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import api from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
+import FamilyMemberCard from "@/components/FamilyMemberCard";
+import AddFamilyMemberModal from "@/components/AddFamilyMemberModal";
 import {
   Heart,
   FileText,
@@ -18,29 +23,54 @@ import dashboardImage from "@/assets/dashboard-illustration.jpg";
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [reports] = useState([
-    {
-      id: 1,
-      title: "Blood Test Report",
-      date: "2025-01-15",
-      type: "Lab Report",
-      status: "Analyzed",
-    },
-    {
-      id: 2,
-      title: "X-Ray Chest",
-      date: "2025-01-10",
-      type: "Imaging",
-      status: "Analyzed",
-    },
-    {
-      id: 3,
-      title: "Prescription - Dr. Khan",
-      date: "2025-01-05",
-      type: "Prescription",
-      status: "Pending",
-    },
-  ]);
+  const { logout } = useAuth();
+  const { toast } = useToast();
+  const [reports, setReports] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [members, setMembers] = useState<any[]>([]);
+  const [showAddMember, setShowAddMember] = useState(false);
+
+  // Load family members from server
+  const loadMembers = async () => {
+    try {
+      const res = await api.family.list();
+      const items = Array.isArray(res) ? res : res?.data || [];
+      setMembers(items);
+    } catch (e) {
+      toast({ title: 'Failed to load family members', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
+    }
+  };
+
+  useEffect(()=>{
+    loadMembers();
+  },[]);
+
+  // Local update helper (keeps UI in sync after server ops)
+  const saveMembers = (next:any[])=>{
+    setMembers(next);
+  }
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await api.report.list();
+        // server returns array or { data: [] }
+        const items = Array.isArray(res) ? res : res?.data || [];
+        if (mounted) setReports(items);
+      } catch (e) {
+        toast({
+          title: "Error loading reports",
+          description: e instanceof Error ? e.message : "Please try again later",
+          variant: "destructive",
+        });
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    })();
+    return () => { mounted = false };
+  }, [toast]);
 
   const stats = [
     {
@@ -74,11 +104,11 @@ export default function Dashboard() {
   ];
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    navigate("/");
+    logout();
   };
 
   return (
+    <>
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b glass-effect sticky top-0 z-50">
@@ -135,21 +165,52 @@ export default function Dashboard() {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8">
+        {/* Family Members Section */}
+        <div className="mb-6 lg:col-span-3">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-bold">Family Members</h2>
+            <div className="flex items-center gap-2">
+              <Button onClick={()=>setShowAddMember(true)} className="gradient-primary">
+                <Plus className="w-4 h-4 mr-2" /> Add family member
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {members.map((m: any)=> (
+              <FamilyMemberCard key={m._id} member={m} onOpen={()=>navigate(`/family/${m._id}`)} onDelete={async ()=>{ try { await api.family.delete(m._id); setMembers(members.filter((x:any)=>x._id!==m._id)); } catch (e) { toast({ title: 'Delete failed', description: e instanceof Error? e.message : String(e), variant: 'destructive' }); } }} onEdit={()=>{ /* TODO: open edit */ }} />
+            ))}
+            <div>
+              <div className="p-4 border-dashed border-2 rounded-lg flex items-center justify-center h-full">
+                <Button onClick={()=>setShowAddMember(true)} variant="outline">+ Add family member</Button>
+              </div>
+            </div>
+          </div>
+        </div>
           {/* Recent Reports */}
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Recent Reports</h2>
-              <Button className="gradient-primary">
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Report
-              </Button>
             </div>
 
             <div className="space-y-4">
               {reports.map((report) => (
                 <Card
-                  key={report.id}
+                  key={report._id}
                   className="p-6 glass-effect hover:shadow-md transition-smooth cursor-pointer"
+                  onClick={async () => {
+                    try {
+                      const reportDetails = await api.report.get(report._id);
+                      if (reportDetails) {
+                        navigate(`/reports/${report._id}`, { state: { report: reportDetails } });
+                      }
+                    } catch (error) {
+                      toast({
+                        title: "Error viewing report",
+                        description: error instanceof Error ? error.message : "Could not load report details",
+                        variant: "destructive"
+                      });
+                    }
+                  }}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
@@ -159,21 +220,21 @@ export default function Dashboard() {
                       <div>
                         <h3 className="font-semibold text-lg">{report.title}</h3>
                         <div className="flex items-center gap-3 mt-1">
-                          <span className="text-sm text-muted-foreground">{report.type}</span>
+                          <span className="text-sm text-muted-foreground">{report.test}</span>
                           <span className="text-sm text-muted-foreground">•</span>
-                          <span className="text-sm text-muted-foreground">{report.date}</span>
+                          <span className="text-sm text-muted-foreground">
+                            {new Date(report.date).toLocaleDateString()}
+                          </span>
                         </div>
                       </div>
                     </div>
                     <div>
                       <span
                         className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          report.status === "Analyzed"
-                            ? "bg-success/10 text-success"
-                            : "bg-muted text-muted-foreground"
+                          report.summary ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"
                         }`}
                       >
-                        {report.status}
+                        {report.summary ? "Analyzed" : "Pending"}
                       </span>
                     </div>
                   </div>
@@ -222,5 +283,10 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+    <AddFamilyMemberModal open={showAddMember} onOpenChange={setShowAddMember} onAdd={(m)=>{
+      const next = [m, ...members];
+      saveMembers(next);
+    }} />
+    </>
   );
 }

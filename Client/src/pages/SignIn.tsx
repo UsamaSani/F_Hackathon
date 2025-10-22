@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Heart, Mail, Lock, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import api from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
@@ -14,28 +16,18 @@ export default function SignIn() {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { login } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // TODO: Implement actual API call to your backend
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Invalid credentials");
-      }
-
-      const data = await response.json();
+      const res = await api.auth.signin({ email, password });
+      const token = res?.data?.accessToken;
+      if (!token) throw new Error("No access token received");
       
-      // Store token
-      localStorage.setItem("token", data.token);
-      
+      login(token);
       toast({
         title: "Welcome back!",
         description: "You've successfully signed in.",

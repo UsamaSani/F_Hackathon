@@ -7,15 +7,20 @@ import { Card } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Heart, Mail, Lock, User, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import api from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 export default function SignUp() {
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [userName, setUserName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { login } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,10 +34,31 @@ export default function SignUp() {
       return;
     }
 
-    if (password.length < 6) {
+    // Check field lengths
+    if (firstName.length < 3 || lastName.length < 3 || userName.length < 3) {
+      toast({
+        title: "Invalid input",
+        description: "First name, last name, and username must be at least 3 characters",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (password.length < 8) {
       toast({
         title: "Password too short",
-        description: "Password must be at least 6 characters",
+        description: "Password must be at least 8 characters",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check password complexity (must have uppercase, lowercase, number, special char)
+    const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/;
+    if (!passwordPattern.test(password)) {
+      toast({
+        title: "Password too weak",
+        description: "Password must include at least one uppercase letter, one lowercase letter, one number, and one special character",
         variant: "destructive",
       });
       return;
@@ -41,23 +67,20 @@ export default function SignUp() {
     setIsLoading(true);
 
     try {
-      // TODO: Implement actual API call to your backend
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+      await api.auth.signup({ 
+        firstName, 
+        lastName, 
+        userName, 
+        email, 
+        password 
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Registration failed");
-      }
-
-      const data = await response.json();
       
-      // Store token
-      localStorage.setItem("token", data.token);
+      // After signup, immediately sign in to get token
+      const signInRes = await api.auth.signin({ email, password });
+      const token = signInRes?.data?.accessToken;
+      if (!token) throw new Error("No access token received");
       
+      login(token);
       toast({
         title: "Account created!",
         description: "Welcome to HealthMate",
@@ -102,18 +125,54 @@ export default function SignUp() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="firstName">First Name</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-3 w-5 h-5 text-muted-foreground" />
+                <Input
+                  id="firstName"
+                  type="text"
+                  placeholder="John"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="pl-10"
+                  required
+                  minLength={3}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lastName">Last Name</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-3 w-5 h-5 text-muted-foreground" />
+                <Input
+                  id="lastName"
+                  type="text"
+                  placeholder="Doe"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="pl-10"
+                  required
+                  minLength={3}
+                />
+              </div>
+            </div>
+          </div>
+          
           <div className="space-y-2">
-            <Label htmlFor="name">Full Name</Label>
+            <Label htmlFor="userName">Username</Label>
             <div className="relative">
               <User className="absolute left-3 top-3 w-5 h-5 text-muted-foreground" />
               <Input
-                id="name"
+                id="userName"
                 type="text"
-                placeholder="John Doe"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                placeholder="johndoe"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
                 className="pl-10"
                 required
+                minLength={3}
               />
             </div>
           </div>

@@ -1,12 +1,15 @@
 // routes/report.router.js
 import express from "express";
 import { Report } from "../schema/report.schema.js";
+import mongoose from 'mongoose';
 import { authGuard } from "../middlewares/auth.js";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse"); // pdf-parse is CommonJS
+// pdf-parse is CommonJS; support both default and direct export
+const _pdfParseLib = require("pdf-parse");
+const pdfParse = _pdfParseLib && _pdfParseLib.default ? _pdfParseLib.default : _pdfParseLib;
 import dotenv from "dotenv";
 dotenv.config();
 import fs from "fs/promises";
@@ -23,8 +26,8 @@ const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const router = express.Router();
 
-// Required fields
-const REQUIRED_FIELDS = ["title", "test", "hospital", "doctor", "date", "price"];
+// Required fields (include familyMemberId so uploads and posts must specify which family member)
+const REQUIRED_FIELDS = ["title", "test", "hospital", "doctor", "date", "price", "familyMemberId"];
 
 // multer memory storage
 const upload = multer({
@@ -249,6 +252,11 @@ router.post("/upload", authGuard, upload.single("pdf"), async (req, res) => {
   const missing = REQUIRED_FIELDS.filter((f) => !req.body[f]);
   if (missing.length) return res.status(400).json({ message: "Missing required fields", missing });
 
+  // validate familyMemberId is a valid ObjectId
+  if (!mongoose.Types.ObjectId.isValid(req.body.familyMemberId)) {
+    return res.status(400).json({ message: 'Invalid familyMemberId. Create a family member via /api/v1/family and use that id.' });
+  }
+
   const parsedDate = tryParseDate(req.body.date);
   if (!parsedDate) return res.status(400).json({ message: "Invalid date format. Use ISO or YYYY-MM-DD." });
 
@@ -300,7 +308,8 @@ router.post("/upload", authGuard, upload.single("pdf"), async (req, res) => {
         price: String(req.body.price),
         pdfUrl,
         summary: finalSummary,
-        createdBy: req.user._id,
+        userId: req.user._id,
+        familyMemberId: req.body.familyMemberId,
       };
       const report = new Report(reportPayload);
       await report.save();
@@ -370,7 +379,8 @@ router.post("/upload", authGuard, upload.single("pdf"), async (req, res) => {
       price: String(req.body.price),
       pdfUrl,
       summary: finalSummary,
-      createdBy: req.user._id,
+      userId: req.user._id,
+      familyMemberId: req.body.familyMemberId,
     };
 
     const report = new Report(reportPayload);
@@ -387,8 +397,16 @@ router.post("/upload", authGuard, upload.single("pdf"), async (req, res) => {
 // CRUD endpoints (unchanged) - keep the ones you already have...
 router.get("/", authGuard, async (req, res) => {
   try {
-    const { hospital, doctor, startDate, endDate } = req.query;
+    const { hospital, doctor, startDate, endDate, familyMemberId } = req.query;
     const query = { flag: true };
+    // If familyMemberId is provided, filter by it
+    if (familyMemberId) {
+      if (!mongoose.Types.ObjectId.isValid(String(familyMemberId))) return res.status(400).json({ message: 'Invalid familyMemberId in query' });
+      query.familyMemberId = familyMemberId;
+    }
+    // Otherwise, return reports belonging to the requesting user (userId)
+    else query.userId = req.user._id;
+
     if (hospital) query.hospital = hospital;
     if (doctor) query.doctor = doctor;
     if (startDate || endDate) {
@@ -396,7 +414,10 @@ router.get("/", authGuard, async (req, res) => {
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
-    const reports = await Report.find(query).sort({ date: -1 }).populate("createdBy", "firstName lastName");
+    const reports = await Report.find(query)
+      .sort({ date: -1 })
+      .populate("userId", "firstName lastName")
+      .populate("familyMemberId", "name relation color");
     res.json(reports);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -405,7 +426,9 @@ router.get("/", authGuard, async (req, res) => {
 
 router.get("/:id", authGuard, async (req, res) => {
   try {
-    const report = await Report.findOne({ _id: req.params.id, flag: true }).populate("createdBy", "firstName lastName");
+    const report = await Report.findOne({ _id: req.params.id, flag: true })
+      .populate("userId", "firstName lastName")
+      .populate("familyMemberId", "name relation color");
     if (!report) return res.status(404).json({ message: "Report not found" });
     res.json(report);
   } catch (error) {
@@ -415,8 +438,10 @@ router.get("/:id", authGuard, async (req, res) => {
 
 router.post("/", authGuard, async (req, res) => {
   try {
-    const reportData = { ...req.body, createdBy: req.user._id };
-    const report = new Report(reportData);
+  // require familyMemberId on manual create
+  if (!req.body.familyMemberId) return res.status(400).json({ message: 'familyMemberId is required' });
+  const reportData = { ...req.body, userId: req.user._id, familyMemberId: req.body.familyMemberId };
+  const report = new Report(reportData);
     await report.save();
     res.status(201).json(report);
   } catch (error) {
@@ -426,9 +451,9 @@ router.post("/", authGuard, async (req, res) => {
 
 router.put("/:id", authGuard, async (req, res) => {
   try {
-    const report = await Report.findOne({ _id: req.params.id, flag: true });
+  const report = await Report.findOne({ _id: req.params.id, flag: true });
     if (!report) return res.status(404).json({ message: "Report not found" });
-    if (report.createdBy.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Not authorized to update this report" });
+  if (report.userId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Not authorized to update this report" });
 
     delete req.body.createdBy;
     Object.assign(report, req.body);
@@ -442,10 +467,10 @@ router.put("/:id", authGuard, async (req, res) => {
 router.delete("/:id", authGuard, async (req, res) => {
   try {
     const report = await Report.findOne({ _id: req.params.id, flag: true });
-    if (!report) return res.status(404).json({ message: "Report not found" });
-    if (report.createdBy.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Not authorized to delete this report" });
+  if (!report) return res.status(404).json({ message: "Report not found" });
+  if (report.userId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Not authorized to delete this report" });
 
-    report.flag = false;
+  report.flag = false;
     await report.save();
     res.json({ message: "Report deleted successfully" });
   } catch (error) {

@@ -13,11 +13,13 @@ const reportSchema = new Schema(
     report: { type: String, required: false },
     pdfUrl: { type: String, required: false }, // Cloudinary PDF URL
     summary: { type: String, required: false }, // Gemini summary
-    createdBy: { type: Schema.Types.ObjectId, ref: "user", required: true },
+    userId: { type: Schema.Types.ObjectId, ref: "user", required: true },
+    familyMemberId: { type: Schema.Types.ObjectId, ref: "familyMember", required: true },
   },
-  { timestamps: true }
+  { timestamps: true, strictPopulate: false }
 );
 
-reportSchema.index({ createdBy: 1, flag: 1 });
+reportSchema.index({ userId: 1, flag: 1 });
+reportSchema.index({ familyMemberId: 1 });
 const Report = model("report", reportSchema);
 export { Report };
